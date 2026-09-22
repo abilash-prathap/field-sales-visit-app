@@ -1,2 +1,12 @@
-# field-sales-visit-app
-Field sales attendance and outlet visit tracking web app with GPS and daily reporting
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Field Sales Visit Tracker</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
