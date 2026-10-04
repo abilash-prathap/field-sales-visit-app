@@ -1,28 +1,541 @@
-import './styles.css';
+const STORAGE_KEY = 'field-sales-visit-app-v1';
 
-const KEY = 'field-sales-visit-app-v1';
-const defaults = { employee: '', beat: '', rate: 12, started: false, start: null, last: null, distance: 0, valid: 0, invalid: 0, visits: [], active: null, close: null };
-let state = { ...defaults, ...load() };
-const $ = (id) => document.getElementById(id);
-const save = () => localStorage.setItem(KEY, JSON.stringify(state));
-function load() { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; } }
-function gps(ok, fail) { if (!navigator.geolocation) return fail('GPS is not supported on this device.'); navigator.geolocation.getCurrentPosition(p => ok({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }), () => fail('Please allow GPS permission to continue.'), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); }
-function km(a, b) { if (!a || !b) return 0; const r=6371, x=(b.lat-a.lat)*Math.PI/180, y=(b.lng-a.lng)*Math.PI/180, z=Math.sin(x/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(y/2)**2; return r*2*Math.atan2(Math.sqrt(z),Math.sqrt(1-z)); }
-function status(id, text, type='') { $(id).textContent=text; $(id).className=`notice ${type}`; }
-function esc(v) { return String(v || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function report() { return `*Daily Closing Report*\nEmployee: ${state.employee || 'N/A'}\nBeat: ${state.beat || 'N/A'}\nValid Visits: ${state.valid}/20\nInvalid Visits: ${state.invalid}\nOutlets Checked: ${state.visits.length}\nTravel Distance: ${state.distance.toFixed(2)} km\nTravel Claim: ₹${(state.distance * Number(state.rate || 0)).toFixed(2)}\nClosing GPS: ${state.close ? `${state.close.lat.toFixed(5)}, ${state.close.lng.toFixed(5)}` : 'N/A'}`; }
+const sampleVisits = [
+  {
+    id: 'visit-1',
+    name: 'Aroma Food Hub',
+    type: 'Retail Outlet',
+    status: 'Verified',
+    minutes: 24,
+    distance: 1.3,
+    notes: 'Stocked fresh batches and recorded weekly promo display.',
+    time: '08:40 AM'
+  },
+  {
+    id: 'visit-2',
+    name: 'GreenLeaf Mart',
+    type: 'Supermarket',
+    status: 'In progress',
+    minutes: 18,
+    distance: 2.1,
+    notes: 'Shelf audit pending for premium category skewers.',
+    time: '09:35 AM'
+  },
+  {
+    id: 'visit-3',
+    name: 'City Corner Cafe',
+    type: 'HORECA',
+    status: 'Verified',
+    minutes: 16,
+    distance: 1.8,
+    notes: 'New display board approved for breakfast bundle.',
+    time: '10:25 AM'
+  }
+];
 
-$('app').innerHTML = `<div class="mobile-app"><header class="appbar"><button class="menu">☰</button><div><h1>Self Report-In</h1><p>FMCG Beat Planner · ${new Date().toLocaleDateString(undefined,{day:'2-digit',month:'short'})}</p></div><div class="app-actions"><span>↻</span><span>ⓘ</span></div></header><nav class="tabs"><button class="tab active" data-view="dashboard">Dashboard</button><button class="tab" data-view="outlets">Outlets</button><button class="tab" data-view="route">Location</button><button class="tab" data-view="report">Reports</button></nav><main>
-<section id="dashboard" class="view active"><div class="profile"><div class="avatar">SE</div><div><strong id="welcome">Good morning, Sales Executive</strong><small id="profileBeat">Assigned beat not started</small></div><span class="bell">♧</span></div><div class="quick-grid"><button class="quick" data-jump="startPanel"><i>⌁</i><b id="qVisits">0</b><span>Valid visits</span></button><button class="quick" data-jump="visitPanel"><i>⌖</i><b id="qOutlets">0</b><span>Today's outlets</span></button><button class="quick" data-jump="reportPanel"><i>₹</i><b id="qClaim">₹0</b><span>Travel claim</span></button></div><article class="section-card"><h2>Beat execution</h2><div class="progress-label"><span>Daily target</span><b id="progressText">0 / 20 valid visits</b></div><div class="progress"><i id="progressBar"></i></div><div class="beat-summary"><div><small>Beat</small><strong id="beatSummary">Not assigned</strong></div><div><small>Distance</small><strong id="distance">0.00 km</strong></div><div><small>Status</small><strong id="routeStatus">Not started</strong></div></div></article><article class="section-card workflow" id="startPanel"><div class="section-title"><div><small>STEP 01</small><h2>Attendance & beat start</h2></div><span class="state-badge" id="startState">PENDING</span></div><label>Employee name<input id="employee" placeholder="Enter your name"></label><label>Assigned beat name<input id="beat" placeholder="e.g. Thanjavur North"></label><div class="twocol"><label>Rate / km<input id="rate" type="number" value="12" min="0"></label><label>Start time<input id="startTime" value="Not started" readonly></label></div><button id="start" class="primary wide">✓ Start beat & capture GPS</button><button id="reset" class="link-btn">Reset today's route</button><div id="startStatus" class="notice">Ready to start your assigned beat.</div></article></section>
-<section id="outlets" class="view"><div class="page-title"><div><small>FIELD EXECUTION</small><h2>Outlet visits</h2></div><span class="counter" id="count">0 visits</span></div><div class="search"><span>⌕</span><input id="outletSearch" placeholder="Search outlet or channel partner"></div><article class="section-card workflow" id="visitPanel"><div class="section-title"><div><small>STEP 02 · 10–30 MINUTES</small><h2>Check in to outlet</h2></div><span class="state-badge orange">VISIT</span></div><label>Outlet / shop name<input id="outlet" placeholder="Enter outlet name"></label><div class="twocol"><label>Stock check<textarea id="stock" placeholder="SKU : quantity"></textarea></label><label>Order booking<textarea id="orders" placeholder="SKU : quantity"></textarea></label></div><label class="upload">▣ Display & competition photo<input id="photo" type="file" accept="image/*" capture="environment"></label><label>No-order reason<input id="reason" placeholder="Required when no order"></label><div class="twocol buttons"><button id="in" class="secondary">✓ Check in</button><button id="out" class="primary">Check out →</button></div><div id="outletStatus" class="notice">No outlet visit in progress.</div></article><article class="section-card"><div class="section-title"><h2>Today's visit log</h2><span class="counter" id="logCount">0</span></div><div id="log" class="visit-list"><div class="empty">No outlet visits recorded yet.</div></div></article></section>
-<section id="route" class="view"><div class="page-title"><div><small>GPS TRACKING</small><h2>Live location</h2></div><span class="gps-chip">● GPS ready</span></div><article class="map-card"><div class="map-grid"></div><div class="map-label">📍 Current route</div><div class="map-road road-one"></div><div class="map-road road-two"></div><div class="map-pin pin-a">●</div><div class="map-pin pin-b">●</div><div class="map-pin pin-c">●</div><div class="map-controls"><button>+</button><button>−</button></div></article><article class="section-card location-detail"><div><small>START LOCATION</small><strong id="startGps">Not captured</strong></div><div><small>TRAVELLED</small><strong id="routeDistance">0.00 km</strong></div><div><small>RATE</small><strong id="routeRate">₹12/km</strong></div></article></section>
-<section id="report" class="view"><div class="page-title"><div><small>DAY CLOSING</small><h2>Reports & claims</h2></div></div><article class="section-card workflow" id="reportPanel"><div class="section-title"><div><small>STEP 03</small><h2>Close & submit</h2></div><span class="state-badge">END OF DAY</span></div><p class="muted">Capture your final GPS location and generate a WhatsApp-ready daily report.</p><label class="upload">▣ Closing GPS photo<input id="closingPhoto" type="file" accept="image/*" capture="environment"></label><button id="close" class="danger wide">Closing check-out with GPS</button><div id="closeStatus" class="notice">Day is still in progress.</div><textarea id="message" class="report" readonly placeholder="Your closing report will appear here"></textarea><button id="copy" class="secondary wide">▣ Copy WhatsApp report</button></article><article class="section-card claim-card"><span class="claim-icon">₹</span><div><small>ESTIMATED TRAVEL CLAIM</small><strong id="claim">₹0.00</strong><p>Calculated from GPS distance</p></div></article></section>
-</main><nav class="bottom-nav"><button class="active" data-view="dashboard">⌂<span>Home</span></button><button data-view="outlets">▤<span>Outlets</span></button><button data-view="route">⌖<span>Location</span></button><button data-view="report">▥<span>Reports</span></button></nav></div>`;
+const defaultState = {
+  employee: 'Asha K.',
+  beat: 'Koramangala South',
+  rate: 18,
+  started: true,
+  visits: sampleVisits,
+  lastLocation: { lat: 12.9352, lng: 77.6245 },
+  routeDistance: 14.8,
+  report: '',
+  selectedView: 'dashboard'
+};
 
-function refresh() { $('employee').value=state.employee; $('beat').value=state.beat; $('rate').value=state.rate; $('welcome').textContent=`Good morning, ${state.employee || 'Sales Executive'}`; $('profileBeat').textContent=state.beat ? `Assigned beat · ${state.beat}` : 'Assigned beat not started'; $('beatSummary').textContent=state.beat || 'Not assigned'; $('distance').textContent=`${state.distance.toFixed(2)} km`; $('routeDistance').textContent=`${state.distance.toFixed(2)} km`; $('routeRate').textContent=`₹${state.rate}/km`; $('claim').textContent=`₹${(state.distance*Number(state.rate||0)).toFixed(2)}`; $('qClaim').textContent=`₹${(state.distance*Number(state.rate||0)).toFixed(0)}`; $('valid').textContent=`${state.valid} / 20`; $('qVisits').textContent=state.valid; $('qOutlets').textContent=state.visits.length; $('progressText').textContent=`${state.valid} / 20 valid visits`; $('progressBar').style.width=`${Math.min(state.valid/20*100,100)}%`; $('routeStatus').textContent=state.started?'In progress':'Not started'; $('startState').textContent=state.started?'ACTIVE':'PENDING'; $('startTime').value=state.start?new Date(state.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'Not started'; $('count').textContent=`${state.visits.length} visit${state.visits.length===1?'':'s'}`; $('logCount').textContent=state.visits.length; $('startGps').textContent=state.start?`${state.last?.lat.toFixed(5)}, ${state.last?.lng.toFixed(5)}`:'Not captured'; $('log').innerHTML=state.visits.length?state.visits.map(v=>`<div class="visit-row"><div class="visit-icon">⌖</div><div><strong>${esc(v.name)}</strong><small>${new Date(v.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · ${v.minutes.toFixed(1)} minutes</small></div><span class="${v.valid?'valid':'invalid'}">${v.valid?'✓ Valid':'× Invalid'}</span></div>`).join(''):'<div class="empty">No outlet visits recorded yet.</div>'; }
-function selectView(view) { document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===view)); document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===view)); window.scrollTo({top:0,behavior:'smooth'}); }
-document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>selectView(b.dataset.view)); document.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{selectView('dashboard'); setTimeout(()=>$(b.dataset.jump)?.scrollIntoView({behavior:'smooth'}),50);});
-$('start').onclick=()=>{ state.employee=$('employee').value.trim(); state.beat=$('beat').value.trim(); state.rate=Number($('rate').value||0); if(!state.employee||!state.beat)return status('startStatus','Enter employee name and assigned beat first.','bad'); gps(p=>{state.started=true;state.start=Date.now();state.last=p;state.distance=0;save();refresh();status('startStatus',`Beat started. GPS accuracy ±${Math.round(p.accuracy||0)}m.`,'good');},e=>status('startStatus',e,'bad')); };
-$('in').onclick=()=>{if(!state.started)return status('outletStatus','Start the assigned beat first.','bad');const name=$('outlet').value.trim();if(!name)return status('outletStatus','Enter an outlet name.','bad');if(state.active)return status('outletStatus','Check out from the current outlet first.','bad');gps(p=>{state.active={name,at:Date.now(),gps:p};save();status('outletStatus',`Checked in to ${name}. Visit window: 10–30 minutes.`,'good');},e=>status('outletStatus',e,'bad'));};
-$('out').onclick=()=>{if(!state.active)return status('outletStatus','Check in to an outlet first.','bad');gps(p=>{const minutes=(Date.now()-state.active.at)/60000,valid=minutes>=10&&minutes<=30;state.distance+=km(state.last,p);state.last=p;state.visits.push({name:state.active.name,at:state.active.at,minutes,valid});valid?state.valid++:state.invalid++;state.active=null;save();refresh();status('outletStatus',valid?`Valid visit recorded (${minutes.toFixed(1)} minutes).`:'Invalid visit: duration must be between 10 and 30 minutes.',valid?'good':'bad');},e=>status('outletStatus',e,'bad'));};
-$('close').onclick=()=>{if(!state.started)return status('closeStatus','Start the day first.','bad');gps(p=>{state.close=p;$('message').value=report();save();status('closeStatus','Closing GPS captured. Report is ready to share.','good');},e=>status('closeStatus',e,'bad'));}; $('copy').onclick=()=>{if(!$('message').value)return status('closeStatus','Generate the report first.','bad');navigator.clipboard?.writeText($('message').value).then(()=>status('closeStatus','WhatsApp report copied.','good'));}; $('reset').onclick=()=>{if(confirm("Reset today's route and visits?")){state={...defaults,rate:Number($('rate').value||12)};save();refresh();$('message').value='';status('startStatus','Day reset. Ready to start again.','good');}}; $('rate').oninput=()=>{state.rate=Number($('rate').value||0);save();refresh();}; refresh();
+const state = loadState();
+
+function loadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return {
+      ...defaultState,
+      ...saved,
+      visits: Array.isArray(saved.visits) && saved.visits.length ? saved.visits : defaultState.visits,
+      lastLocation: saved.lastLocation || defaultState.lastLocation,
+    };
+  } catch (error) {
+    return { ...defaultState };
+  }
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(lat2 - lat1);
+  const dLng = toRadians(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function createDemoLocation() {
+  const base = {
+    lat: 12.9352 + (Math.random() - 0.5) * 0.004,
+    lng: 77.6245 + (Math.random() - 0.5) * 0.004,
+  };
+
+  return {
+    lat: Number(base.lat.toFixed(5)),
+    lng: Number(base.lng.toFixed(5)),
+    accuracy: 18 + Math.round(Math.random() * 25),
+    source: 'demo'
+  };
+}
+
+function getCurrentLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(createDemoLocation());
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          lat: Number(position.coords.latitude.toFixed(5)),
+          lng: Number(position.coords.longitude.toFixed(5)),
+          accuracy: position.coords.accuracy || 25,
+          source: 'live'
+        });
+      },
+      () => {
+        resolve(createDemoLocation());
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  });
+}
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value || 0);
+}
+
+function calculateStats() {
+  const valid = state.visits.filter((visit) => visit.status === 'Verified').length;
+  const total = state.visits.length;
+  const revenue = state.visits.reduce((sum, visit) => sum + (Number(visit.minutes || 0) * (state.rate || 12) * 4), 0);
+  const distance = state.routeDistance || 0;
+  const completion = Math.min(100, Math.round((valid / 20) * 100));
+
+  return { valid, total, revenue, distance, completion };
+}
+
+function renderApp() {
+  const stats = calculateStats();
+
+  document.getElementById('app').innerHTML = `
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">SP</div>
+          <div>
+            <span class="eyebrow muted">Field ops</span>
+            <h3>SalesPilot</h3>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="Main navigation">
+          <button class="nav-item active" data-view="dashboard">
+            <span>⌂</span>
+            Overview
+          </button>
+          <button class="nav-item" data-view="outlets">
+            <span>▣</span>
+            Outlets
+          </button>
+          <button class="nav-item" data-view="route">
+            <span>◎</span>
+            Route
+          </button>
+          <button class="nav-item" data-view="report">
+            <span>✎</span>
+            Report
+          </button>
+        </nav>
+
+        <div class="sidebar-card">
+          <p>Today’s target</p>
+          <strong>${stats.valid}/20</strong>
+          <span>${stats.completion}% complete</span>
+        </div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow muted">${getGreeting()}, ${state.employee || 'Sales Executive'}</span>
+            <h1>Beat dashboard</h1>
+          </div>
+          <div class="header-actions">
+            <button class="secondary-btn" id="demoGpsBtn">Demo GPS</button>
+            <button class="primary-btn" id="startDayBtn">${state.started ? 'Update beat' : 'Start beat'}</button>
+          </div>
+        </header>
+
+        <section id="dashboard" class="view active">
+          <div class="hero-card card">
+            <div>
+              <p class="eyebrow accent">Assigned beat</p>
+              <h2>${state.beat || 'No beat assigned'}</h2>
+              <p class="meta-copy">Coverage team • ${new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
+            </div>
+            <div class="hero-actions">
+              <div class="status-pill"><span class="dot green"></span>Live</div>
+              <button class="primary-btn" id="generateReportBtn">Generate report</button>
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <article class="stat-card card">
+              <span class="stat-label">Visits</span>
+              <strong>${stats.total}</strong>
+              <small>${stats.valid} verified</small>
+            </article>
+            <article class="stat-card card">
+              <span class="stat-label">Distance</span>
+              <strong>${stats.distance.toFixed(1)} km</strong>
+              <small>Today’s route</small>
+            </article>
+            <article class="stat-card card">
+              <span class="stat-label">Value</span>
+              <strong>${formatCurrency(stats.revenue)}</strong>
+              <small>Estimated output</small>
+            </article>
+            <article class="stat-card card">
+              <span class="stat-label">Rate</span>
+              <strong>${formatCurrency(state.rate)}/hour</strong>
+              <small>Billing rate</small>
+            </article>
+          </div>
+
+          <div class="panel-grid">
+            <section class="card form-card">
+              <div class="section-header">
+                <div>
+                  <span class="eyebrow muted">Profile</span>
+                  <h3>Beat setup</h3>
+                </div>
+              </div>
+
+              <div class="input-grid">
+                <label>
+                  <span>Field executive</span>
+                  <input id="employeeInput" type="text" value="${state.employee || ''}" placeholder="Enter employee name" />
+                </label>
+                <label>
+                  <span>Assigned beat</span>
+                  <input id="beatInput" type="text" value="${state.beat || ''}" placeholder="Ex: Whitefield West" />
+                </label>
+                <label>
+                  <span>Billing rate</span>
+                  <input id="rateInput" type="number" min="0" value="${state.rate || 0}" placeholder="Enter hourly rate" />
+                </label>
+              </div>
+
+              <div class="button-row">
+                <button class="primary-btn" id="saveProfileBtn">Save profile</button>
+                <button class="ghost-btn" id="resetDemoBtn">Reset demo</button>
+              </div>
+            </section>
+
+            <section class="card list-card">
+              <div class="section-header">
+                <div>
+                  <span class="eyebrow muted">Recent</span>
+                  <h3>Visit log</h3>
+                </div>
+                <span class="chip">${state.visits.length} visits</span>
+              </div>
+              <div class="visit-list">
+                ${state.visits.map((visit) => `
+                  <article class="visit-item">
+                    <div class="visit-dot ${visit.status === 'Verified' ? 'green' : 'amber'}"></div>
+                    <div class="visit-copy">
+                      <h4>${visit.name}</h4>
+                      <p>${visit.type} • ${visit.time}</p>
+                    </div>
+                    <div class="visit-meta">
+                      <strong>${visit.status}</strong>
+                      <span>${visit.minutes} min</span>
+                    </div>
+                  </article>
+                `).join('')}
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="outlets" class="view">
+          <div class="card form-card wide-card">
+            <div class="section-header">
+              <div>
+                <span class="eyebrow muted">Capture</span>
+                <h3>Outlet visit</h3>
+              </div>
+            </div>
+
+            <div class="input-grid two-column">
+              <label>
+                <span>Outlet name</span>
+                <input id="outletName" type="text" placeholder="Ex: Metro Mart" />
+              </label>
+              <label>
+                <span>Channel</span>
+                <select id="outletType">
+                  <option value="Retail Outlet">Retail Outlet</option>
+                  <option value="Supermarket">Supermarket</option>
+                  <option value="HORECA">HORECA</option>
+                  <option value="Distributor">Distributor</option>
+                </select>
+              </label>
+              <label class="full-width">
+                <span>Visit notes</span>
+                <textarea id="outletNotes" rows="4" placeholder="Add remarks, stock status or KPI notes..."></textarea>
+              </label>
+            </div>
+
+            <div class="button-row">
+              <button class="primary-btn" id="captureVisitBtn">Capture visit</button>
+              <button class="ghost-btn" id="addDemoOutletBtn">Add demo outlet</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="route" class="view">
+          <div class="card map-card">
+            <div class="section-header">
+              <div>
+                <span class="eyebrow muted">GPS tracking</span>
+                <h3>Live route</h3>
+              </div>
+              <span class="status-pill"><span class="dot green"></span>GPS ready</span>
+            </div>
+
+            <div class="route-visual">
+              <div class="route-pin pin-1"></div>
+              <div class="route-pin pin-2"></div>
+              <div class="route-pin pin-3"></div>
+              <div class="route-pin pin-4"></div>
+              <div class="location-badge">${state.lastLocation.lat}, ${state.lastLocation.lng}</div>
+            </div>
+
+            <div class="route-summary">
+              <div>
+                <span>Distance</span>
+                <strong>${state.routeDistance.toFixed(1)} km</strong>
+              </div>
+              <div>
+                <span>Accuracy</span>
+                <strong>±18 m</strong>
+              </div>
+              <div>
+                <span>Last sync</span>
+                <strong>${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="report" class="view">
+          <div class="card report-card">
+            <div class="section-header">
+              <div>
+                <span class="eyebrow muted">Closing</span>
+                <h3>Daily report</h3>
+              </div>
+            </div>
+
+            <textarea id="reportOutput" rows="12" readonly>${state.report || buildReport()}</textarea>
+
+            <div class="button-row">
+              <button class="primary-btn" id="buildReportBtn">Refresh report</button>
+              <button class="secondary-btn" id="copyReportBtn">Copy summary</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  `;
+
+  bindInteractions();
+}
+
+function buildReport() {
+  const stats = calculateStats();
+  const summary = `*Daily Closing Report*
+Employee: ${state.employee || 'N/A'}
+Beat: ${state.beat || 'N/A'}
+Valid Visits: ${stats.valid}/20
+Invalid Visits: ${Math.max(0, stats.total - stats.valid)}
+Distance: ${state.routeDistance.toFixed(1)} km
+Estimated Revenue: ${formatCurrency(stats.revenue)}
+Status: ${state.started ? 'Beat active' : 'Not started'}
+
+Outlets covered:
+${state.visits.map((visit) => `- ${visit.name} (${visit.type}) • ${visit.status}`).join('\n')}`;
+
+  state.report = summary;
+  return summary;
+}
+
+function bindInteractions() {
+  document.querySelectorAll('.nav-item').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
+      const view = button.dataset.view;
+      document.querySelectorAll('.view').forEach((section) => {
+        section.classList.toggle('active', section.id === view);
+      });
+      state.selectedView = view;
+      saveState();
+    });
+  });
+
+  document.getElementById('saveProfileBtn').addEventListener('click', () => {
+    const employee = document.getElementById('employeeInput').value.trim();
+    const beat = document.getElementById('beatInput').value.trim();
+    const rate = Number(document.getElementById('rateInput').value || 0);
+
+    state.employee = employee || state.employee;
+    state.beat = beat || state.beat;
+    state.rate = rate || state.rate;
+    state.started = true;
+    saveState();
+    renderApp();
+  });
+
+  document.getElementById('resetDemoBtn').addEventListener('click', () => {
+    Object.assign(state, { ...defaultState });
+    saveState();
+    renderApp();
+  });
+
+  document.getElementById('startDayBtn').addEventListener('click', async () => {
+    const location = await getCurrentLocation();
+    state.lastLocation = location;
+    state.started = true;
+    state.routeDistance = Number((state.routeDistance + 0.8).toFixed(1));
+    saveState();
+    renderApp();
+  });
+
+  document.getElementById('demoGpsBtn').addEventListener('click', async () => {
+    state.lastLocation = createDemoLocation();
+    state.routeDistance = Number((state.routeDistance + 1.1).toFixed(1));
+    saveState();
+    renderApp();
+  });
+
+  document.getElementById('captureVisitBtn').addEventListener('click', () => {
+    const name = document.getElementById('outletName').value.trim();
+    const type = document.getElementById('outletType').value || 'Retail Outlet';
+    const notes = document.getElementById('outletNotes').value.trim();
+
+    if (!name) {
+      alert('Please enter an outlet name before capturing the visit.');
+      return;
+    }
+
+    const visit = {
+      id: `visit-${Date.now()}`,
+      name,
+      type,
+      notes: notes || 'Visited during routine field check.',
+      status: 'Verified',
+      minutes: Math.max(10, 12 + Math.floor(Math.random() * 14)),
+      distance: Number((Math.random() * 2 + 0.7).toFixed(1)),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    state.visits.unshift(visit);
+    state.routeDistance = Number((state.routeDistance + 0.6).toFixed(1));
+    saveState();
+    renderApp();
+  });
+
+  document.getElementById('addDemoOutletBtn').addEventListener('click', () => {
+    const demoNames = ['North Star Foods', 'Bloom Grocery', 'Harbor Market', 'Urban Staple'];
+    const typeOptions = ['Retail Outlet', 'Supermarket', 'HORECA', 'Distributor'];
+    const visit = {
+      id: `demo-${Date.now()}`,
+      name: demoNames[Math.floor(Math.random() * demoNames.length)],
+      type: typeOptions[Math.floor(Math.random() * typeOptions.length)],
+      notes: 'Pre-loaded demo outlet for prototype walkthrough.',
+      status: 'In progress',
+      minutes: 15,
+      distance: 1.2,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    state.visits.unshift(visit);
+    saveState();
+    renderApp();
+  });
+
+  document.getElementById('generateReportBtn').addEventListener('click', () => {
+    buildReport();
+    document.getElementById('reportOutput').value = state.report;
+    document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === 'report'));
+    document.querySelectorAll('.view').forEach((section) => {
+      section.classList.toggle('active', section.id === 'report');
+    });
+    saveState();
+  });
+
+  document.getElementById('buildReportBtn').addEventListener('click', () => {
+    const report = buildReport();
+    document.getElementById('reportOutput').value = report;
+    saveState();
+  });
+
+  document.getElementById('copyReportBtn').addEventListener('click', async () => {
+    const reportText = document.getElementById('reportOutput').value;
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(reportText);
+      document.getElementById('copyReportBtn').textContent = 'Copied';
+      setTimeout(() => {
+        document.getElementById('copyReportBtn').textContent = 'Copy summary';
+      }, 1200);
+    }
+  });
+}
+
+renderApp();
+
+window.addEventListener('DOMContentLoaded', () => {
+  const selectedView = state.selectedView || 'dashboard';
+  document.querySelectorAll('.view').forEach((section) => {
+    section.classList.toggle('active', section.id === selectedView);
+  });
+  document.querySelectorAll('.nav-item').forEach((button) => {
+    button.classList.toggle('active', button.dataset.view === selectedView);
+  });
+});
+
+if (document.getElementById('reportOutput')) {
+  document.getElementById('reportOutput').value = state.report || buildReport();
+}
+
+saveState();
